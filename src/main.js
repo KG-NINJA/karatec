@@ -1,4 +1,4 @@
- // Karateka-like minimalist in pure Canvas 2D
+  // Karateka-like minimalist in pure Canvas 2D
   // No external deps. Open index.html to play.
 
   (() => {
@@ -23,6 +23,7 @@
     const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
     const lerp = (a, b, t) => a + (b - a) * t;
     const rand = (a, b) => a + Math.random() * (b - a);
+    const smoothStep = (t) => t * t * (3 - 2 * t);
 
     // Input
     const keys = new Set();
@@ -57,7 +58,7 @@
       constructor(opts = {}) {
         this.name = opts.name || 'Fighter';
         this.x = opts.x || 100;
-        this.y = GROUND_Y;
+        this.y = opts.y || GROUND_Y;
         this.dir = opts.dir || 1; // 1 right, -1 left
         this.enemy = !!opts.enemy;
         this.color = opts.color || '#cde5ff';
@@ -85,6 +86,7 @@
         this.accentColor = opts.accentColor || (this.enemy ? '#2856a6' : '#d53f4e');
         this.footWrapColor = opts.footWrapColor || (this.enemy ? '#25344a' : '#27364a');
         this.giShadow = opts.giShadow || (this.enemy ? '#e0e3ef' : '#e5ecf6');
+        this.opacity = 1;
         // Animation params
         this.armExtend = 0; // 0..1 (punch blend)
         this.legExtend = 0; // 0..1 (kick blend)
@@ -179,6 +181,7 @@
         if (!this.alive) {
           this.armExtend = Math.max(0, this.armExtend - dt * 0.004);
           this.legExtend = Math.max(0, this.legExtend - dt * 0.004);
+          this.opacity = Math.max(0.2, this.opacity - dt * 0.001);
           return;
         }
 
@@ -209,7 +212,9 @@
           }
         }
         this.x += vx * dt / 1000;
-        this.x = clamp(this.x, 20, WORLD_W - 20);
+        const leftLimit = game ? game.getLeftBoundary(this) : 20;
+        const rightLimit = game ? game.getRightBoundary(this) : WORLD_W - 20;
+        this.x = clamp(this.x, leftLimit, rightLimit);
 
         // Attack timeline
         if (this.attack) {
@@ -264,6 +269,11 @@
           this.armExtend = lerp(this.armExtend, 0.0, 0.25);
           this.legExtend = lerp(this.legExtend, 0.0, 0.25);
         }
+
+        if (!game || game.state !== 'falling') {
+          this.opacity = lerp(this.opacity, 1, 0.15);
+          this.y = lerp(this.y, GROUND_Y, 0.35);
+        }
       }
 
       handlePlayerInput(dt, input, game) {
@@ -285,15 +295,12 @@
         if (keys.has('s')) this.stanceIndex = clamp(this.stanceIndex - 1, 0, 2);
 
         // Debounce stance change speed slightly by consuming once per press
-        // Simple approach: remove key after applying; player can hold to step slowly due to key repeat
         if (keys.has('w')) keys.delete('w');
         if (keys.has('s')) keys.delete('s');
 
         // Attack inputs: J punch, K kick; aim = stance
         if (keys.has('j')) {
-          // Start normal punch; Hyakuretsu mode will multi-hit during active
           this.startAttack('punch', this.stance);
-          // Extend active for flurry so many hits can occur from one input
           if (this.debugHyakuretsu && this.attack && this.attack.kind === 'punch') {
             this.attack.active = Math.max(this.attack.active, 800);
             this.attack.recover = Math.min(this.attack.recover, 120);
@@ -339,11 +346,9 @@
         if (this._aiAtkTimer <= 0 && !this.attack && this.attackCooldown <= 0 && dist < 86) {
           const preferKick = Math.random() < 0.45;
           const kind = preferKick ? 'kick' : 'punch';
-          // Aim sometimes away from player's stance to slip through
           const options = ['low','mid','high'];
           let aim = options[Math.floor(Math.random()*3)];
           if (Math.random() < 0.55) {
-            // pick a height not equal to player's stance
             const others = options.filter(h => h !== player.stance);
             aim = others[Math.floor(Math.random()*others.length)];
           }
@@ -359,10 +364,17 @@
         const BW = Math.round(b.w);
         const BH = Math.round(b.h);
 
-        // Shadow
-        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.save();
+        ctx.globalAlpha = this.opacity;
+
+        // Shadow fades as fighter falls
+        const dropDepth = Math.max(0, this.y - GROUND_Y);
+        const shadowAlpha = 0.35 * Math.max(0, 1 - dropDepth / 220);
+        const shadowRadius = Math.max(12, Math.max(18, BW*0.7) * Math.max(0.35, 1 - dropDepth / 240));
+        const shadowY = this.y + Math.min(50, dropDepth * 0.2) + 4;
+        ctx.fillStyle = `rgba(0,0,0,${shadowAlpha.toFixed(3)})`;
         ctx.beginPath();
-        ctx.ellipse(BX + BW/2, this.y + 4, Math.max(18, BW*0.7), 8, 0, 0, Math.PI * 2);
+        ctx.ellipse(BX + BW/2, shadowY, shadowRadius, Math.max(6, 8 - dropDepth * 0.02), 0, 0, Math.PI * 2);
         ctx.fill();
 
         const side = this.dir; // 1 facing right, -1 left
@@ -407,7 +419,6 @@
         ctx.fillRect(-torsoW/2 + 4, -torsoH/2 + torsoH*0.3, torsoW - 8, torsoH*0.55);
         ctx.fillStyle = 'rgba(255,255,255,0.12)';
         ctx.fillRect(-torsoW/2 + 3, -torsoH/2 + 3, torsoW*0.32, torsoH*0.28);
-        // Lapel
         ctx.strokeStyle = outline;
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -422,7 +433,6 @@
         const headY = BY + BH*0.12 + crouch*0.2;
         const headR = BW*0.34;
 
-        // Hair back shape
         ctx.save();
         ctx.beginPath();
         ctx.arc(headX, headY - headR*0.75, headR*1.05, Math.PI, 0);
@@ -434,7 +444,6 @@
         ctx.fill();
         ctx.restore();
 
-        // Head base
         ctx.beginPath();
         ctx.arc(headX, headY, headR, 0, Math.PI*2);
         ctx.fillStyle = skinFront;
@@ -443,13 +452,11 @@
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Headband accent
         ctx.fillStyle = accent;
         ctx.fillRect(headX - headR*0.8, headY - headR*0.32, headR*1.6, headR*0.18);
         ctx.strokeStyle = outline;
         ctx.strokeRect(headX - headR*0.8, headY - headR*0.32, headR*1.6, headR*0.18);
 
-        // Ear
         ctx.beginPath();
         const earX = headX - side * headR * 0.88;
         const earY = headY + headR*0.05;
@@ -460,7 +467,6 @@
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        // Eyes
         const eyeOffset = headR*0.4;
         const eyeY = headY - headR*0.1;
         ctx.fillStyle = this.eyeColor;
@@ -470,7 +476,6 @@
         ctx.fillRect(headX - eyeOffset - 2, eyeY - 2, 2, 2);
         ctx.fillRect(headX + eyeOffset, eyeY - 2, 2, 2);
 
-        // Nose
         ctx.strokeStyle = '#b07457';
         ctx.lineWidth = 1.3;
         ctx.beginPath();
@@ -478,15 +483,12 @@
         ctx.lineTo(headX + side*headR*0.12, eyeY + headR*0.25);
         ctx.stroke();
 
-        // Mouth
         ctx.strokeStyle = '#b55a58';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
         ctx.arc(headX, headY + headR*0.35, headR*0.35, 0, Math.PI);
         ctx.stroke();
-        ctx.lineWidth = 2;
 
-        // Cheeks
         ctx.fillStyle = 'rgba(255,130,130,0.18)';
         ctx.beginPath();
         ctx.ellipse(headX - eyeOffset, headY + headR*0.15, headR*0.28, headR*0.18, 0, 0, Math.PI*2);
@@ -495,7 +497,6 @@
         ctx.ellipse(headX + eyeOffset, headY + headR*0.15, headR*0.28, headR*0.18, 0, 0, Math.PI*2);
         ctx.fill();
 
-        // Limb dimensions
         const upperArm = BH * 0.22;
         const foreArm  = BH * 0.22;
         const thigh    = BH * 0.26;
@@ -504,13 +505,11 @@
         const thicknessArm = 6;
         const thicknessLeg = 7;
 
-        // Base guard angles (front/back)
         const guardFront = { up: -0.15 + walkSwing*0.3, low: -1.0 };
         const guardBack  = { up: -0.75 - walkSwing*0.2, low: -0.9 };
         const legFrontA  = { thigh: 0.75 + (stance==='low'?0.15:0) + walkSwing*0.2, shin: 0.85 + (stance==='low'?0.15:0) - walkSwing*0.2, foot: 0.15 };
         const legBackA   = { thigh: 0.95 + (stance==='low'?0.15:0) - walkSwing*0.2, shin: 0.95 + (stance==='low'?0.15:0) + walkSwing*0.2, foot: -0.05 };
 
-        // Attack posing adjustments
         if (this.attack) {
           const a = this.attack;
           const total = a.windup + a.active + a.recover;
@@ -541,17 +540,14 @@
           }
         }
 
-        // Compute limb anchors after torso lean and crouch
         const baseShoulderX = shoulderX + side * 2;
         const baseShoulderY = shoulderY + crouch;
         const baseHipX = hipX;
         const baseHipY = hipY + crouch;
 
-        // Back limbs first (depth)
         drawLeg(baseHipX - side*8, baseHipY, legBackA.thigh, legBackA.shin, thicknessLeg, giShadow, skinBack, wrapColor, true);
         drawArm(baseShoulderX - side*8, baseShoulderY, guardBack.up, guardBack.low, thicknessArm, giShadow, skinBack, true);
 
-        // Torso belt and details above back limbs but below front
         ctx.fillStyle = '#0b0e12';
         ctx.fillRect(BX + 2, beltY, BW - 4, 4);
         ctx.fillStyle = beltColor;
@@ -559,16 +555,16 @@
         ctx.fillStyle = accent;
         ctx.fillRect(BX + BW/2 - 14, beltY, 28, 3);
 
-        // Front limbs
         drawArm(baseShoulderX, baseShoulderY, guardFront.up, guardFront.low, thicknessArm, giColor, skinFront, false);
         drawLeg(baseHipX, baseHipY, legFrontA.thigh, legFrontA.shin, thicknessLeg, giColor, skinFront, wrapColor, false);
 
-        // Debug attack rect
         const ar = this.getAttackRect();
         if (ar) {
           ctx.fillStyle = 'rgba(255, 160, 48, 0.35)';
           ctx.fillRect(Math.round(ar.x - camX), Math.round(ar.y), Math.round(ar.w), Math.round(ar.h));
         }
+
+        ctx.restore();
 
         function drawArm(sx, sy, aUpper, aLower, th, sleeveColor, skinColor, isBack) {
           const a1 = aUpper * side;
@@ -723,18 +719,102 @@
           })
         ];
         this.activeEnemy = null;
-        this.state = 'playing'; // 'playing' | 'win' | 'lose'
+        this.state = 'playing'; // 'playing' | 'falling' | 'win' | 'lose'
+        this.loseReason = null;
         this.cameraX = 0;
         this.time = 0;
         this.engageRadius = 360; // spawn/engage enemy when within this range
         this.debugHyakuretsu = false;
+        this.seaEdgeX = 42;
+        this.seaWidth = 340;
+        this.seaSurfaceY = GROUND_Y + 96;
+        this.seaBottomY = GROUND_Y + 220;
+        this.fallAnim = null;
+        this.splashTimer = 0;
       }
 
       reset() {
         Object.assign(this, new Game());
       }
 
+      getLeftBoundary(fighter) {
+        if (this.state === 'falling' && fighter === this.player) {
+          return this.seaEdgeX - this.seaWidth - 120;
+        }
+        return 20;
+      }
+
+      getRightBoundary() {
+        return WORLD_W - 20;
+      }
+
+      beginSeaFall() {
+        this.state = 'falling';
+        this.loseReason = 'fall';
+        this.fallAnim = {
+          t: 0,
+          duration: 2600,
+          startX: this.player.x,
+          startY: this.player.y,
+          endX: this.seaEdgeX - this.seaWidth * 0.6,
+          pauseSpan: 0.4,
+          splashShown: false
+        };
+        this.player.state = 'fall';
+        this.player.moveDir = 0;
+        this.player.attack = null;
+        this.player.hitLag = 0;
+        this.player.armExtend = 0.25;
+        this.player.legExtend = 0.15;
+        this.player.dir = -1;
+        centerMsg.textContent = '足元が崩れた…';
+        centerMsg.style.opacity = 0.9;
+      }
+
+      updateFall(dt) {
+        if (keys.has('r')) { this.reset(); keys.delete('r'); return; }
+        if (!this.fallAnim) return;
+        const f = this.fallAnim;
+        f.t += dt;
+        const t = clamp(f.t / f.duration, 0, 1);
+        const driftEase = smoothStep(Math.min(1, t / 0.65));
+        const sinkEase = t < 0.65 ? smoothStep(t / 0.65) : 1 - Math.pow(1 - (t - 0.65) / 0.35, 2);
+
+        this.player.x = lerp(f.startX, f.endX, driftEase);
+        const surfaceTarget = this.seaSurfaceY - 28;
+        const sinkTarget = this.seaBottomY;
+        const midY = lerp(f.startY, surfaceTarget, Math.min(1, sinkEase));
+        const deepEase = t < 0.72 ? 0 : smoothStep((t - 0.72) / 0.28);
+        this.player.y = lerp(midY, sinkTarget, deepEase);
+        this.player.opacity = Math.max(0, 1 - Math.pow(Math.max(0, t - 0.75) / 0.25, 1.6));
+        this.player.hp = clamp(this.player.hp - (100 * dt / f.duration), 0, this.player.maxHp);
+        pbar.style.width = `${Math.round((this.player.hp / this.player.maxHp) * 100)}%`;
+        ebar.style.width = '0%';
+        this.cameraX = lerp(this.cameraX, 0, 0.08);
+
+        if (!f.splashShown && t > 0.68) {
+          f.splashShown = true;
+          this.splashTimer = 420;
+        }
+
+        centerMsg.textContent = '海へ落下中…';
+        centerMsg.style.opacity = 0.85 - 0.45 * t;
+
+        if (t >= 1) {
+          this.player.hp = 0;
+          this.player.alive = false;
+          this.state = 'lose';
+          centerMsg.textContent = '落水… Rで再挑戦';
+          centerMsg.style.opacity = 1;
+        }
+      }
+
       update(dt) {
+        if (this.state === 'falling') {
+          this.updateFall(dt);
+          return;
+        }
+
         if (this.state !== 'playing') {
           if (keys.has('r')) { this.reset(); keys.delete('r'); }
           return;
@@ -742,69 +822,59 @@
 
         this.time += dt;
 
-        // Toggle debug Hyakuretsu with H
         if (keys.has('h')) { this.debugHyakuretsu = !this.debugHyakuretsu; keys.delete('h'); }
 
-        // Engage nearest future enemy
         if (!this.activeEnemy || !this.activeEnemy.alive) {
           this.activeEnemy = this.enemies.find(e => e.alive && Math.abs(e.x - this.player.x) < this.engageRadius && e.x >= this.player.x);
         }
 
-        // Update player and enemy
-        // Inject debug flag into player each frame
         this.player.debugHyakuretsu = this.debugHyakuretsu;
         this.player.update(dt, this, keys);
         if (this.activeEnemy) this.activeEnemy.update(dt, this, null);
 
-        // Camera follows player, limited by world
-        const marginLeft = 300; // keep player slightly left of center
+        const marginLeft = 300;
         const targetCam = clamp(this.player.x - marginLeft, 0, Math.max(0, WORLD_W - VIEW_W));
         this.cameraX = lerp(this.cameraX, targetCam, 0.08);
 
-        // Check win/lose
-        if (!this.player.alive) this.state = 'lose';
+        if (!this.player.alive) {
+          this.state = 'lose';
+          if (!this.loseReason) this.loseReason = 'combat';
+        }
         const allDown = this.enemies.every(e => !e.alive);
         if (allDown && this.player.x > WORLD_W - 200) this.state = 'win';
 
-        // UI bars
         pbar.style.width = `${Math.round((this.player.hp / this.player.maxHp) * 100)}%`;
         const foe = this.activeEnemy && this.activeEnemy.alive ? this.activeEnemy : this.enemies.find(e => e.alive) || null;
         ebar.style.width = foe ? `${Math.round((foe.hp / foe.maxHp) * 100)}%` : '0%';
 
-        // Center message
         if (this.state === 'playing') {
           if (!this.activeEnemy || !this.activeEnemy.alive) {
             centerMsg.textContent = this.debugHyakuretsu ? '進め →  [DEBUG: 百裂拳]' : '進め →';
             centerMsg.style.opacity = 0.5;
           } else {
             centerMsg.textContent = this.debugHyakuretsu ? '[DEBUG: 百裂拳]' : '';
+            centerMsg.style.opacity = this.debugHyakuretsu ? 0.7 : 0;
           }
-        } else if (this.state === 'win') {
-          centerMsg.textContent = '勝利!  Rで再開';
-          centerMsg.style.opacity = 1;
-        } else if (this.state === 'lose') {
-          centerMsg.textContent = '敗北…  Rで再挑戦';
-          centerMsg.style.opacity = 1;
+        }
+
+        if (!this.activeEnemy && this.player.x <= this.seaEdgeX + 4 && this.player.moveDir < 0 && this.cameraX < 10) {
+          this.beginSeaFall();
         }
       }
 
       draw() {
-        // Clear
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Background parallax
         const skyGrad = ctx.createLinearGradient(0, 0, 0, VIEW_H);
         skyGrad.addColorStop(0, '#0f1620');
         skyGrad.addColorStop(1, '#0b0e12');
         ctx.fillStyle = skyGrad;
         ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
-        // Mountains (parallax)
         const cam = this.cameraX;
         drawHills(cam * 0.25, 0.15, '#142131');
         drawHills(cam * 0.5,  0.25, '#121b28');
 
-        // Ground
         ctx.fillStyle = '#141a22';
         ctx.fillRect(0, GROUND_Y + 8, VIEW_W, VIEW_H - (GROUND_Y + 8));
         ctx.fillStyle = '#1a2533';
@@ -815,9 +885,26 @@
           ctx.fillRect(ix, GROUND_Y + 10, 18, 2);
         }
 
-        // Fighters
+        this.drawSea(cam);
+
         if (this.activeEnemy) this.activeEnemy.draw(ctx, cam);
         this.player.draw(ctx, cam);
+
+        if (this.splashTimer > 0) {
+          this.drawSplash(cam);
+          this.splashTimer -= 16;
+        }
+
+        if (this.state === 'lose' && this.loseReason === 'fall') {
+          centerMsg.textContent = '落水… Rで再挑戦';
+          centerMsg.style.opacity = 1;
+        } else if (this.state === 'win') {
+          centerMsg.textContent = '勝利!  Rで再開';
+          centerMsg.style.opacity = 1;
+        } else if (this.state === 'lose' && this.loseReason !== 'fall') {
+          centerMsg.textContent = '敗北…  Rで再挑戦';
+          centerMsg.style.opacity = 1;
+        }
 
         function drawHills(cx, scale, color) {
           ctx.fillStyle = color;
@@ -835,6 +922,63 @@
           ctx.fill();
         }
       }
+
+      drawSea(cam) {
+        const shoreX = this.seaEdgeX - cam;
+        const seaStart = shoreX - this.seaWidth;
+        if (shoreX > VIEW_W) return;
+
+        const surface = this.seaSurfaceY;
+        const seaGrad = ctx.createLinearGradient(0, surface, 0, VIEW_H);
+        seaGrad.addColorStop(0, '#0c1f32');
+        seaGrad.addColorStop(0.4, '#0a1a29');
+        seaGrad.addColorStop(1, '#050b12');
+
+        ctx.fillStyle = seaGrad;
+        ctx.fillRect(seaStart - 40, surface, this.seaWidth + 80, VIEW_H - surface);
+
+        ctx.fillStyle = '#193f5c';
+        ctx.fillRect(seaStart - 40, surface - 6, this.seaWidth + 80, 6);
+
+        ctx.fillStyle = '#213448';
+        ctx.fillRect(shoreX - 8, GROUND_Y - 60, 12, 70);
+        ctx.fillStyle = '#141d28';
+        ctx.fillRect(shoreX - 20, GROUND_Y - 12, 28, 12);
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 4; i++) {
+          const waveY = surface + 18 + i * 24;
+          ctx.beginPath();
+          for (let x = seaStart - 40; x <= seaStart + this.seaWidth + 30; x += 24) {
+            const phase = ((this.time || 0) * 0.002 + i * 0.8);
+            const offset = Math.sin((x + phase * 60) * 0.03) * 6;
+            ctx.lineTo(x, waveY + offset);
+          }
+          ctx.stroke();
+        }
+      }
+
+      drawSplash(cam) {
+        const shoreX = this.seaEdgeX - cam - this.seaWidth * 0.5;
+        const splashBaseX = shoreX + this.seaWidth * 0.5;
+        const splashY = this.seaSurfaceY + 8;
+        const life = clamp(this.splashTimer / 420, 0, 1);
+        const height = 22 * life;
+        const spread = 90 * (1 - Math.pow(1 - life, 2));
+
+        ctx.strokeStyle = `rgba(255,255,255,${0.45 * life})`;
+        ctx.lineWidth = 3 * life;
+        ctx.beginPath();
+        ctx.moveTo(splashBaseX - spread * 0.5, splashY);
+        ctx.quadraticCurveTo(splashBaseX, splashY - height, splashBaseX + spread * 0.5, splashY);
+        ctx.stroke();
+
+        ctx.fillStyle = `rgba(255,255,255,${0.22 * life})`;
+        ctx.beginPath();
+        ctx.ellipse(splashBaseX, splashY + 10, 26 + spread * 0.15, 6 + life * 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     const game = new Game();
@@ -844,6 +988,7 @@
     function loop(now) {
       const dt = Math.min(32, now - last);
       last = now;
+      game.time += dt;
       game.update(dt);
       game.draw();
       requestAnimationFrame(loop);
