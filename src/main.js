@@ -24,6 +24,33 @@
   const lerp = (a, b, t) => a + (b - a) * t;
   const rand = (a, b) => a + Math.random() * (b - a);
 
+  // Color helpers for palette variations
+  const toRgb = (hex) => {
+    if (!hex) return { r: 255, g: 255, b: 255 };
+    let str = hex.toString().replace('#', '');
+    if (str.length === 3) str = str.split('').map((c) => c + c).join('');
+    if (str.length !== 6) return { r: 255, g: 255, b: 255 };
+    const int = parseInt(str, 16);
+    if (Number.isNaN(int)) return { r: 255, g: 255, b: 255 };
+    return { r: (int >> 16) & 255, g: (int >> 8) & 255, b: int & 255 };
+  };
+  const fromRgb = (r, g, b) => {
+    const toHex = (v) => Math.round(clamp(v, 0, 255)).toString(16).padStart(2, '0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  };
+  const mixColor = (base, target, t) => {
+    const c1 = toRgb(base);
+    const c2 = toRgb(target);
+    const k = clamp(t, 0, 1);
+    return fromRgb(
+      c1.r + (c2.r - c1.r) * k,
+      c1.g + (c2.g - c1.g) * k,
+      c1.b + (c2.b - c1.b) * k
+    );
+  };
+  const lighten = (hex, t) => mixColor(hex, '#ffffff', t);
+  const darken = (hex, t) => mixColor(hex, '#000000', t);
+
   // Input
   const keys = new Set();
   window.addEventListener('keydown', (e) => {
@@ -59,8 +86,8 @@
       this.x = opts.x || 100;
       this.y = GROUND_Y;
       this.dir = opts.dir || 1; // 1 right, -1 left
-      this.color = opts.color || '#cde5ff';
       this.enemy = !!opts.enemy;
+      this.color = opts.color || (this.enemy ? '#ffb3bd' : '#cfefff');
       this.maxHp = 100;
       this.hp = this.maxHp;
       this.width = 36;
@@ -356,8 +383,23 @@
       ctx.fill();
 
       const side = this.dir; // 1 facing right, -1 left
-      const hue = this.enemy ? '#ffb3bd' : '#cfefff';
       const outline = '#0b0e12';
+      const baseColor = this.color;
+      const accentColor = this.enemy ? '#2c7dfd' : '#ff3b4d';
+      const backArmColor = lighten(baseColor, 0.18);
+      const backLegColor = lighten(baseColor, 0.1);
+      const frontArmColor = baseColor;
+      const frontLegColor = lighten(baseColor, 0.03);
+      const handAccent = lighten(baseColor, 0.28);
+      const backHandAccent = lighten(baseColor, 0.32);
+      const skinTone = this.enemy ? '#f1c6a8' : '#f7d8bd';
+      const skinShade = darken(skinTone, 0.18);
+      const skinHighlight = lighten(skinTone, 0.15);
+      const hairColor = this.enemy ? '#1f2d4a' : '#3a231b';
+      const hairHighlight = lighten(hairColor, 0.2);
+      const giBase = '#f5f9ff';
+      const giShadow = darken(giBase, 0.18);
+      const giHighlight = lighten(giBase, 0.1);
 
       // Derived anchor points
       const torsoTop = BY + BH * 0.18;
@@ -381,33 +423,273 @@
       ctx.save();
       ctx.translate(hipX, (torsoTop + torsoBot)/2 + crouch);
       ctx.rotate(lean * side);
-      ctx.fillStyle = '#f5f9ff';
+      const giGrad = ctx.createLinearGradient(0, -torsoH/2, 0, torsoH/2);
+      giGrad.addColorStop(0, giHighlight);
+      giGrad.addColorStop(0.52, giBase);
+      giGrad.addColorStop(1, giShadow);
+      ctx.fillStyle = giGrad;
       ctx.strokeStyle = outline;
       ctx.lineWidth = 2;
-      ctx.fillRect(-torsoW/2, -torsoH/2, torsoW, torsoH);
-      ctx.strokeRect(-torsoW/2, -torsoH/2, torsoW, torsoH);
-      // Lapel
       ctx.beginPath();
-      ctx.moveTo(0, -torsoH/2);
-      ctx.lineTo(-side*torsoW*0.25, -torsoH*0.05);
-      ctx.lineTo(0, torsoH*0.25);
+      ctx.moveTo(-torsoW * 0.55, -torsoH / 2);
+      ctx.quadraticCurveTo(-torsoW * 0.78, -torsoH * 0.05, -torsoW * 0.38, torsoH / 2);
+      ctx.lineTo(torsoW * 0.42, torsoH / 2);
+      ctx.quadraticCurveTo(torsoW * 0.78, -torsoH * 0.05, torsoW * 0.5, -torsoH / 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Lapel and gi folds
+      ctx.strokeStyle = darken(giBase, 0.3);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-torsoW * 0.02, -torsoH / 2);
+      ctx.lineTo(-side * torsoW * 0.32, -torsoH * 0.08);
+      ctx.lineTo(side * torsoW * 0.08, torsoH * 0.38);
+      ctx.stroke();
+
+      ctx.strokeStyle = darken(giBase, 0.25);
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(side * torsoW * 0.18, -torsoH * 0.04);
+      ctx.quadraticCurveTo(side * torsoW * 0.32, torsoH * 0.26, side * torsoW * 0.1, torsoH * 0.48);
+      ctx.stroke();
+
+      // Belt
+      const beltWidth = torsoW * 0.92;
+      const beltHeight = torsoH * 0.18;
+      const beltLocalY = beltY - ((torsoTop + torsoBot) / 2 + crouch);
+      const beltTop = beltLocalY - beltHeight / 2;
+      const beltGrad = ctx.createLinearGradient(-beltWidth / 2, beltLocalY, beltWidth / 2, beltLocalY);
+      beltGrad.addColorStop(0, darken(baseColor, 0.45));
+      beltGrad.addColorStop(0.52, darken(baseColor, 0.2));
+      beltGrad.addColorStop(1, lighten(baseColor, 0.1));
+      ctx.fillStyle = beltGrad;
+      roundedRectPath(-beltWidth / 2, beltTop, beltWidth, beltHeight, beltHeight * 0.45);
+      ctx.fill();
+      ctx.strokeStyle = darken(baseColor, 0.5);
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+
+      ctx.strokeStyle = lighten(baseColor, 0.35);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-beltWidth * 0.36, beltTop + beltHeight * 0.25);
+      ctx.lineTo(-beltWidth * 0.08, beltTop + beltHeight * 0.18);
+      ctx.moveTo(beltWidth * 0.05, beltTop + beltHeight * 0.22);
+      ctx.lineTo(beltWidth * 0.35, beltTop + beltHeight * 0.34);
       ctx.stroke();
       ctx.restore();
 
-      // Head (colored band to mimic helmet)
+      // Head & portrait details
+      const headX = BX + BW/2 + side * 8;
+      const headY = BY + BH * 0.12 + crouch * 0.2;
+      const headR = BW * 0.34;
+      const faceTilt = -side * 0.05 + this.armExtend * 0.02 * side;
+
+      // Neck
+      const neckBottom = torsoTop + crouch * 0.6;
+      const neckTop = headY + headR * 0.52;
+      const neckHeight = Math.max(6, neckBottom - neckTop);
+      const neckCenterY = neckTop + neckHeight / 2;
+      const neckWidth = headR * 0.62;
+      const neckCenterX = headX - side * headR * 0.04;
+      const neckGrad = ctx.createLinearGradient(neckCenterX, neckCenterY - neckHeight / 2, neckCenterX, neckCenterY + neckHeight / 2);
+      neckGrad.addColorStop(0, skinHighlight);
+      neckGrad.addColorStop(0.6, skinTone);
+      neckGrad.addColorStop(1, skinShade);
+      ctx.fillStyle = neckGrad;
+      ctx.strokeStyle = skinShade;
+      ctx.lineWidth = 1.6;
+      roundedRectPath(neckCenterX - neckWidth / 2, neckCenterY - neckHeight / 2, neckWidth, neckHeight, neckWidth * 0.45);
+      ctx.fill();
+      ctx.stroke();
+
+      // Hair volume (back)
+      ctx.save();
+      ctx.translate(headX, headY);
+      ctx.rotate(faceTilt * 0.3);
       ctx.beginPath();
-      const headX = BX + BW/2 + side*8;
-      const headY = BY + BH*0.12 + crouch*0.2;
-      const headR = BW*0.34;
-      ctx.arc(headX, headY, headR, 0, Math.PI*2);
-      ctx.fillStyle = '#ffe9d6';
+      ctx.moveTo(-side * headR * 0.95, -headR * 0.6);
+      ctx.quadraticCurveTo(-side * headR * 0.45, -headR * 1.18, side * headR * 0.3, -headR * 1.05);
+      ctx.quadraticCurveTo(side * headR * 1.05, -headR * 0.12, side * headR * 0.9, headR * 0.64);
+      ctx.quadraticCurveTo(side * headR * 0.1, headR * 1.02, -side * headR * 0.82, headR * 0.88);
+      ctx.closePath();
+      const hairGrad = ctx.createLinearGradient(-side * headR, -headR, side * headR, headR);
+      hairGrad.addColorStop(0, hairHighlight);
+      hairGrad.addColorStop(1, hairColor);
+      ctx.fillStyle = hairGrad;
+      ctx.fill();
+      ctx.strokeStyle = darken(hairColor, 0.25);
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+
+      // Ear
+      ctx.save();
+      ctx.translate(headX - side * headR * 0.72, headY + headR * 0.05);
+      ctx.rotate(faceTilt * 0.3);
+      const earGrad = ctx.createLinearGradient(-headR * 0.2, -headR * 0.3, headR * 0.2, headR * 0.3);
+      earGrad.addColorStop(0, skinHighlight);
+      earGrad.addColorStop(1, skinTone);
+      ctx.fillStyle = earGrad;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, headR * 0.24, headR * 0.34, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = skinShade;
+      ctx.lineWidth = 1.3;
+      ctx.stroke();
+      ctx.restore();
+
+      // Headband ties
+      ctx.save();
+      ctx.translate(headX + side * headR * 1.02, headY - headR * 0.42);
+      ctx.rotate(faceTilt * 0.4 + side * 0.12);
+      ctx.fillStyle = darken(accentColor, 0.15);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.quadraticCurveTo(side * headR * 0.38, headR * 0.1, side * headR * 0.36, headR * 0.48);
+      ctx.quadraticCurveTo(side * headR * 0.16, headR * 0.62, 0, headR * 0.68);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = darken(accentColor, 0.35);
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.restore();
+
+      // Face & features
+      ctx.save();
+      ctx.translate(headX, headY);
+      ctx.rotate(faceTilt);
+      const faceGrad = ctx.createRadialGradient(-side * headR * 0.18, -headR * 0.45, headR * 0.12, 0, 0, headR);
+      faceGrad.addColorStop(0, skinHighlight);
+      faceGrad.addColorStop(0.7, skinTone);
+      faceGrad.addColorStop(1, skinShade);
+      ctx.fillStyle = faceGrad;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, headR * 0.8, headR * 0.95, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = outline;
       ctx.lineWidth = 2;
       ctx.stroke();
-      // Headband/helmet color
-      ctx.fillStyle = this.enemy ? '#2c7dfd' : '#ff3b4d';
-      ctx.fillRect(headX - headR, headY - headR*0.5, headR*2, headR*0.4);
+
+      const bandTop = -headR * 0.58;
+      const bandBottom = -headR * 0.32;
+      ctx.beginPath();
+      ctx.moveTo(-headR * 0.88, bandTop);
+      ctx.quadraticCurveTo(0, bandTop - headR * 0.12, headR * 0.94, bandTop);
+      ctx.lineTo(headR * 1.02, bandBottom);
+      ctx.quadraticCurveTo(0, bandBottom - headR * 0.05, -headR * 0.98, bandBottom);
+      ctx.closePath();
+      const bandGrad = ctx.createLinearGradient(-headR, 0, headR, 0);
+      bandGrad.addColorStop(0, darken(accentColor, 0.2));
+      bandGrad.addColorStop(0.5, accentColor);
+      bandGrad.addColorStop(1, lighten(accentColor, 0.2));
+      ctx.fillStyle = bandGrad;
+      ctx.fill();
+      ctx.strokeStyle = darken(accentColor, 0.35);
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+
+      const intense = this.state === 'attack' || this.state === 'block' || this.state === 'hit';
+      const eyeSquint = intense ? headR * 0.04 : 0;
+      const browDrop = intense ? headR * 0.06 : 0;
+
+      const eyeX = side * headR * 0.22;
+      const eyeY = -headR * 0.08 + eyeSquint * 0.4;
+      const eyeH = Math.max(headR * 0.12, headR * 0.18 - eyeSquint);
+      ctx.beginPath();
+      ctx.ellipse(eyeX, eyeY, headR * 0.24, eyeH, -side * 0.08, 0, Math.PI * 2);
+      ctx.fillStyle = '#fdfdff';
+      ctx.fill();
+      ctx.strokeStyle = outline;
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(eyeX + side * headR * 0.06, eyeY, headR * 0.09, headR * 0.09, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#1a1b1e';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(eyeX + side * headR * 0.08, eyeY - headR * 0.03, headR * 0.03, headR * 0.03, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+
+      const farEyeX = -side * headR * 0.06;
+      const farEyeY = eyeY + headR * 0.02;
+      const farEyeH = Math.max(headR * 0.1, eyeH * 0.7);
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.ellipse(farEyeX, farEyeY, headR * 0.18, farEyeH, -side * 0.12, 0, Math.PI * 2);
+      ctx.fillStyle = '#f7f8fb';
+      ctx.fill();
+      ctx.restore();
+      ctx.strokeStyle = outline;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(farEyeX, farEyeY, headR * 0.18, farEyeH, -side * 0.12, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(farEyeX + side * headR * 0.04, farEyeY, headR * 0.055, headR * 0.055, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#1f242a';
+      ctx.fill();
+
+      ctx.strokeStyle = darken(hairColor, 0.1);
+      ctx.lineWidth = headR * 0.16;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(eyeX - side * headR * 0.24, eyeY - headR * 0.28 - browDrop);
+      ctx.lineTo(eyeX + side * headR * 0.18, eyeY - headR * 0.22 - browDrop);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(farEyeX - side * headR * 0.16, farEyeY - headR * 0.28 - browDrop * 0.5);
+      ctx.lineTo(farEyeX + side * headR * 0.14, farEyeY - headR * 0.24 - browDrop * 0.5);
+      ctx.stroke();
+
+      ctx.strokeStyle = skinShade;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(side * headR * 0.04, -headR * 0.02);
+      ctx.quadraticCurveTo(side * headR * 0.22, headR * 0.1, side * headR * 0.04, headR * 0.18);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(side * headR * 0.02, headR * 0.18);
+      ctx.quadraticCurveTo(side * headR * 0.18, headR * 0.21, side * headR * 0.14, headR * 0.24);
+      ctx.stroke();
+
+      const mouthY = headR * 0.38;
+      ctx.strokeStyle = mixColor(skinTone, '#b55c52', 0.5);
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(-side * headR * 0.08, mouthY);
+      ctx.quadraticCurveTo(side * headR * 0.02, mouthY + headR * 0.07, side * headR * 0.28, mouthY - headR * 0.02);
+      ctx.stroke();
+      ctx.strokeStyle = skinHighlight;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-side * headR * 0.05, mouthY - headR * 0.02);
+      ctx.quadraticCurveTo(side * headR * 0.04, mouthY + headR * 0.03, side * headR * 0.22, mouthY - headR * 0.04);
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(255, 146, 146, 0.18)';
+      ctx.beginPath();
+      ctx.ellipse(side * headR * 0.04, headR * 0.26, headR * 0.24, headR * 0.18, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+
+      // Fringe highlight
+      ctx.save();
+      ctx.translate(headX, headY);
+      ctx.rotate(faceTilt * 0.2);
+      ctx.strokeStyle = hairHighlight;
+      ctx.lineWidth = headR * 0.12;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-side * headR * 0.28, -headR * 0.55);
+      ctx.lineTo(-side * headR * 0.08, -headR * 0.32);
+      ctx.stroke();
+      ctx.restore();
 
       // Limb dimensions
       const upperArm = BH * 0.22;
@@ -415,8 +697,8 @@
       const thigh    = BH * 0.26;
       const shin     = BH * 0.26;
       const footL    = BH * 0.16;
-      const thicknessArm = 6;
-      const thicknessLeg = 7;
+      const thicknessArm = 7;
+      const thicknessLeg = 8;
 
       // Base guard angles (front/back)
       const guardFront = { up: -0.15 + walkSwing*0.3, low: -1.0 };
@@ -471,18 +753,50 @@
       const baseHipY = hipY + crouch;
 
       // Back limbs first (depth)
-      drawLeg(baseHipX - side*8, baseHipY, legBackA.thigh, legBackA.shin, thicknessLeg, '#dfe9f5');
-      drawArm(baseShoulderX - side*8, baseShoulderY, guardBack.up, guardBack.low, thicknessArm, '#cfddee');
+      drawLeg(baseHipX - side*8, baseHipY, legBackA.thigh, legBackA.shin, thicknessLeg, backLegColor, lighten(backLegColor, 0.15));
+      drawArm(baseShoulderX - side*8, baseShoulderY, guardBack.up, guardBack.low, thicknessArm, backArmColor, backHandAccent);
 
-      // Torso belt and details above back limbs but below front
-      ctx.fillStyle = '#0b0e12';
-      ctx.fillRect(BX + 2, beltY, BW - 4, 4);
-      ctx.fillStyle = this.enemy ? '#2c7dfd' : '#ff3b4d';
-      ctx.fillRect(BX + BW/2 - 14, beltY, 28, 3);
+      // Torso belt knot overlay (keeps belt visible over limbs)
+      const knotWidth = BW * 0.32;
+      const knotHeight = BW * 0.18;
+      const knotX = BX + BW / 2 - knotWidth / 2;
+      const knotY = beltY - knotHeight * 0.5;
+      const knotGrad = ctx.createLinearGradient(knotX, knotY, knotX + knotWidth, knotY);
+      knotGrad.addColorStop(0, darken(baseColor, 0.45));
+      knotGrad.addColorStop(0.5, darken(baseColor, 0.18));
+      knotGrad.addColorStop(1, lighten(baseColor, 0.1));
+      ctx.fillStyle = knotGrad;
+      roundedRectPath(knotX, knotY, knotWidth, knotHeight, knotHeight * 0.45);
+      ctx.fill();
+      ctx.strokeStyle = darken(baseColor, 0.55);
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+
+      ctx.fillStyle = darken(baseColor, 0.4);
+      ctx.beginPath();
+      ctx.moveTo(knotX + knotWidth * 0.18, knotY + knotHeight);
+      ctx.quadraticCurveTo(knotX + knotWidth * 0.08, knotY + knotHeight * 1.6, knotX + knotWidth * 0.28, knotY + knotHeight * 2.25);
+      ctx.quadraticCurveTo(knotX + knotWidth * 0.38, knotY + knotHeight * 2.0, knotX + knotWidth * 0.32, knotY + knotHeight * 1.2);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(knotX + knotWidth * 0.76, knotY + knotHeight);
+      ctx.quadraticCurveTo(knotX + knotWidth * 0.92, knotY + knotHeight * 1.55, knotX + knotWidth * 0.7, knotY + knotHeight * 2.35);
+      ctx.quadraticCurveTo(knotX + knotWidth * 0.56, knotY + knotHeight * 2.05, knotX + knotWidth * 0.6, knotY + knotHeight * 1.18);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = lighten(baseColor, 0.35);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(knotX + knotWidth * 0.2, knotY + knotHeight * 0.35);
+      ctx.lineTo(knotX + knotWidth * 0.8, knotY + knotHeight * 0.35);
+      ctx.stroke();
 
       // Front limbs
-      drawArm(baseShoulderX, baseShoulderY, guardFront.up, guardFront.low, thicknessArm, hue);
-      drawLeg(baseHipX, baseHipY, legFrontA.thigh, legFrontA.shin, thicknessLeg, hue);
+      drawArm(baseShoulderX, baseShoulderY, guardFront.up, guardFront.low, thicknessArm, frontArmColor, handAccent);
+      drawLeg(baseHipX, baseHipY, legFrontA.thigh, legFrontA.shin, thicknessLeg, frontLegColor, darken(frontLegColor, 0.2));
 
       // Debug attack rect
       const ar = this.getAttackRect();
@@ -491,53 +805,185 @@
         ctx.fillRect(Math.round(ar.x - camX), Math.round(ar.y), Math.round(ar.w), Math.round(ar.h));
       }
 
-      function drawArm(sx, sy, aUpper, aLower, th, color) {
+      function drawArm(sx, sy, aUpper, aLower, th, color, handColor = color) {
         const a1 = aUpper * side;
         const a2 = (aUpper + aLower) * side;
-        // Upper arm
-        segment(sx, sy, a1, upperArm, th, color);
-        // Forearm start point
+        const segmentHighlight = lighten(color, 0.35);
+        const jointShade = darken(color, 0.12);
+
+        // Shoulder cap
+        ctx.save();
+        ctx.translate(sx, sy);
+        const shoulderGrad = ctx.createRadialGradient(-side * th * 0.2, -th * 0.6, th * 0.4, 0, 0, th * 0.9);
+        shoulderGrad.addColorStop(0, segmentHighlight);
+        shoulderGrad.addColorStop(1, color);
+        ctx.fillStyle = shoulderGrad;
+        ctx.strokeStyle = outline;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, th * 0.85, th * 1.05, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        segment(sx, sy, a1, upperArm, th, color, segmentHighlight);
+
         const ex = sx + Math.cos(a1) * upperArm;
         const ey = sy + Math.sin(a1) * upperArm;
-        segment(ex, ey, a2, foreArm, th, color);
-        // Glove/fist
+
+        // Elbow joint
+        ctx.save();
+        ctx.translate(ex, ey);
+        const elbowGrad = ctx.createRadialGradient(-side * th * 0.15, -th * 0.3, th * 0.2, 0, 0, th * 0.7);
+        elbowGrad.addColorStop(0, segmentHighlight);
+        elbowGrad.addColorStop(1, jointShade);
+        ctx.fillStyle = elbowGrad;
+        ctx.strokeStyle = outline;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, th * 0.68, th * 0.54, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        segment(ex, ey, a2, foreArm, th * 0.94, color, segmentHighlight);
+
         const fx = ex + Math.cos(a2) * foreArm;
         const fy = ey + Math.sin(a2) * foreArm;
-        ctx.fillStyle = color;
-        ctx.fillRect(fx - 4, fy - 4, 8, 8);
-      }
 
-      function drawLeg(sx, sy, aThigh, aShin, th, color) {
-        const a1 = aThigh * side;
-        const a2 = (aThigh + aShin) * side;
-        segment(sx, sy, a1, thigh, th, color);
-        const kx = sx + Math.cos(a1) * thigh;
-        const ky = sy + Math.sin(a1) * thigh;
-        segment(kx, ky, a2, shin, th, color);
-        // Foot
-        const fx = kx + Math.cos(a2) * shin;
-        const fy = ky + Math.sin(a2) * shin;
+        // Hand/fist
         ctx.save();
         ctx.translate(fx, fy);
         ctx.rotate(a2);
-        ctx.fillStyle = color;
+        const fistW = th * 0.85;
+        const fistH = th * 0.7;
+        const handGrad = ctx.createLinearGradient(-fistW / 2, 0, fistW / 2, 0);
+        handGrad.addColorStop(0, lighten(handColor, 0.25));
+        handGrad.addColorStop(0.5, handColor);
+        handGrad.addColorStop(1, darken(handColor, 0.2));
+        ctx.fillStyle = handGrad;
         ctx.strokeStyle = outline;
-        ctx.lineWidth = 2;
-        ctx.fillRect(0, -th*0.4, footL, th*0.8);
-        ctx.strokeRect(0, -th*0.4, footL, th*0.8);
+        ctx.lineWidth = 1.6;
+        roundedRectPath(-fistW / 2, -fistH / 2, fistW, fistH, fistH * 0.45);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.strokeStyle = lighten(handColor, 0.35);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(-fistW * 0.3, -fistH * 0.05);
+        ctx.lineTo(fistW * 0.42, -fistH * 0.08);
+        ctx.stroke();
         ctx.restore();
       }
 
-      function segment(sx, sy, ang, len, th, color) {
+      function drawLeg(sx, sy, aThigh, aShin, th, color, footColor = color) {
+        const a1 = aThigh * side;
+        const a2 = (aThigh + aShin) * side;
+        const segmentHighlight = lighten(color, 0.28);
+        const jointShade = darken(color, 0.2);
+
+        segment(sx, sy, a1, thigh, th, color, segmentHighlight);
+        const kx = sx + Math.cos(a1) * thigh;
+        const ky = sy + Math.sin(a1) * thigh;
+
+        ctx.save();
+        ctx.translate(kx, ky);
+        const kneeGrad = ctx.createRadialGradient(-side * th * 0.18, -th * 0.35, th * 0.2, 0, 0, th * 0.75);
+        kneeGrad.addColorStop(0, segmentHighlight);
+        kneeGrad.addColorStop(1, jointShade);
+        ctx.fillStyle = kneeGrad;
+        ctx.strokeStyle = outline;
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, th * 0.72, th * 0.56, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        segment(kx, ky, a2, shin, th * 0.96, color, segmentHighlight);
+
+        const fx = kx + Math.cos(a2) * shin;
+        const fy = ky + Math.sin(a2) * shin;
+
+        ctx.save();
+        ctx.translate(fx, fy);
+        ctx.rotate(a2);
+        const footH = th * 0.85;
+        const footGrad = ctx.createLinearGradient(0, -footH / 2, 0, footH / 2);
+        footGrad.addColorStop(0, lighten(footColor, 0.25));
+        footGrad.addColorStop(0.55, footColor);
+        footGrad.addColorStop(1, darken(footColor, 0.2));
+        ctx.fillStyle = footGrad;
+        ctx.strokeStyle = outline;
+        ctx.lineWidth = 2;
+        roundedRectPath(0, -footH / 2, footL, footH, footH * 0.45);
+        ctx.fill();
+        ctx.stroke();
+
+        const soleY = -footH / 2 + footH * 0.75;
+        ctx.strokeStyle = darken(footColor, 0.3);
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(footL * 0.1, soleY);
+        ctx.lineTo(footL * 0.85, soleY - footH * 0.05);
+        ctx.stroke();
+
+        ctx.strokeStyle = lighten(footColor, 0.35);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(footL * 0.1, -footH * 0.15);
+        ctx.lineTo(footL * 0.75, -footH * 0.22);
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      function segment(sx, sy, ang, len, th, color, highlight) {
         ctx.save();
         ctx.translate(sx, sy);
         ctx.rotate(ang);
-        ctx.fillStyle = color;
+        const grad = ctx.createLinearGradient(0, -th / 2, 0, th / 2);
+        grad.addColorStop(0, lighten(color, 0.2));
+        grad.addColorStop(0.5, color);
+        grad.addColorStop(1, darken(color, 0.2));
+        ctx.fillStyle = grad;
         ctx.strokeStyle = outline;
         ctx.lineWidth = 2;
-        ctx.fillRect(0, -th/2, len, th);
-        ctx.strokeRect(0, -th/2, len, th);
+        ctx.beginPath();
+        ctx.moveTo(0, -th / 2);
+        ctx.lineTo(len, -th / 2);
+        ctx.quadraticCurveTo(len + th * 0.3, 0, len, th / 2);
+        ctx.lineTo(0, th / 2);
+        ctx.quadraticCurveTo(-th * 0.3, 0, 0, -th / 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        const hl = highlight || lighten(color, 0.35);
+        ctx.strokeStyle = hl;
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.moveTo(len * 0.15, -th * 0.22);
+        ctx.lineTo(len * 0.82, -th * 0.1);
+        ctx.stroke();
+
         ctx.restore();
+      }
+
+      function roundedRectPath(x, y, w, h, r) {
+        const radius = Math.max(0, Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2));
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + w - radius, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+        ctx.lineTo(x + w, y + h - radius);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+        ctx.lineTo(x + radius, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
       }
     }
   }
