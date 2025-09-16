@@ -24,6 +24,33 @@
   const lerp = (a, b, t) => a + (b - a) * t;
   const rand = (a, b) => a + Math.random() * (b - a);
 
+  // Color helpers for palette variations
+  const toRgb = (hex) => {
+    if (!hex) return { r: 255, g: 255, b: 255 };
+    let str = hex.toString().replace('#', '');
+    if (str.length === 3) str = str.split('').map((c) => c + c).join('');
+    if (str.length !== 6) return { r: 255, g: 255, b: 255 };
+    const int = parseInt(str, 16);
+    if (Number.isNaN(int)) return { r: 255, g: 255, b: 255 };
+    return { r: (int >> 16) & 255, g: (int >> 8) & 255, b: int & 255 };
+  };
+  const fromRgb = (r, g, b) => {
+    const toHex = (v) => Math.round(clamp(v, 0, 255)).toString(16).padStart(2, '0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  };
+  const mixColor = (base, target, t) => {
+    const c1 = toRgb(base);
+    const c2 = toRgb(target);
+    const k = clamp(t, 0, 1);
+    return fromRgb(
+      c1.r + (c2.r - c1.r) * k,
+      c1.g + (c2.g - c1.g) * k,
+      c1.b + (c2.b - c1.b) * k
+    );
+  };
+  const lighten = (hex, t) => mixColor(hex, '#ffffff', t);
+  const darken = (hex, t) => mixColor(hex, '#000000', t);
+
   // Input
   const keys = new Set();
   window.addEventListener('keydown', (e) => {
@@ -59,8 +86,8 @@
       this.x = opts.x || 100;
       this.y = GROUND_Y;
       this.dir = opts.dir || 1; // 1 right, -1 left
-      this.color = opts.color || '#cde5ff';
       this.enemy = !!opts.enemy;
+      this.color = opts.color || (this.enemy ? '#ffb3bd' : '#cfefff');
       this.maxHp = 100;
       this.hp = this.maxHp;
       this.width = 36;
@@ -356,8 +383,14 @@
       ctx.fill();
 
       const side = this.dir; // 1 facing right, -1 left
-      const hue = this.enemy ? '#ffb3bd' : '#cfefff';
       const outline = '#0b0e12';
+      const baseColor = this.color;
+      const backArmColor = lighten(baseColor, 0.22);
+      const backLegColor = lighten(baseColor, 0.15);
+      const frontArmColor = baseColor;
+      const frontLegColor = lighten(baseColor, 0.05);
+      const handAccent = lighten(baseColor, 0.3);
+      const backHandAccent = lighten(baseColor, 0.35);
 
       // Derived anchor points
       const torsoTop = BY + BH * 0.18;
@@ -471,8 +504,8 @@
       const baseHipY = hipY + crouch;
 
       // Back limbs first (depth)
-      drawLeg(baseHipX - side*8, baseHipY, legBackA.thigh, legBackA.shin, thicknessLeg, '#dfe9f5');
-      drawArm(baseShoulderX - side*8, baseShoulderY, guardBack.up, guardBack.low, thicknessArm, '#cfddee');
+      drawLeg(baseHipX - side*8, baseHipY, legBackA.thigh, legBackA.shin, thicknessLeg, backLegColor, lighten(backLegColor, 0.15));
+      drawArm(baseShoulderX - side*8, baseShoulderY, guardBack.up, guardBack.low, thicknessArm, backArmColor, backHandAccent);
 
       // Torso belt and details above back limbs but below front
       ctx.fillStyle = '#0b0e12';
@@ -481,8 +514,8 @@
       ctx.fillRect(BX + BW/2 - 14, beltY, 28, 3);
 
       // Front limbs
-      drawArm(baseShoulderX, baseShoulderY, guardFront.up, guardFront.low, thicknessArm, hue);
-      drawLeg(baseHipX, baseHipY, legFrontA.thigh, legFrontA.shin, thicknessLeg, hue);
+      drawArm(baseShoulderX, baseShoulderY, guardFront.up, guardFront.low, thicknessArm, frontArmColor, handAccent);
+      drawLeg(baseHipX, baseHipY, legFrontA.thigh, legFrontA.shin, thicknessLeg, frontLegColor, darken(frontLegColor, 0.2));
 
       // Debug attack rect
       const ar = this.getAttackRect();
@@ -491,7 +524,7 @@
         ctx.fillRect(Math.round(ar.x - camX), Math.round(ar.y), Math.round(ar.w), Math.round(ar.h));
       }
 
-      function drawArm(sx, sy, aUpper, aLower, th, color) {
+      function drawArm(sx, sy, aUpper, aLower, th, color, handColor = color) {
         const a1 = aUpper * side;
         const a2 = (aUpper + aLower) * side;
         // Upper arm
@@ -503,11 +536,11 @@
         // Glove/fist
         const fx = ex + Math.cos(a2) * foreArm;
         const fy = ey + Math.sin(a2) * foreArm;
-        ctx.fillStyle = color;
+        ctx.fillStyle = handColor;
         ctx.fillRect(fx - 4, fy - 4, 8, 8);
       }
 
-      function drawLeg(sx, sy, aThigh, aShin, th, color) {
+      function drawLeg(sx, sy, aThigh, aShin, th, color, footColor = color) {
         const a1 = aThigh * side;
         const a2 = (aThigh + aShin) * side;
         segment(sx, sy, a1, thigh, th, color);
@@ -520,7 +553,7 @@
         ctx.save();
         ctx.translate(fx, fy);
         ctx.rotate(a2);
-        ctx.fillStyle = color;
+        ctx.fillStyle = footColor;
         ctx.strokeStyle = outline;
         ctx.lineWidth = 2;
         ctx.fillRect(0, -th*0.4, footL, th*0.8);
