@@ -1,3 +1,27 @@
+/*
+MIT License
+
+Copyright (c) 2025 Karate project contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
   // Karateka-like minimalist in pure Canvas 2D
   // No external deps. Open index.html to play.
 
@@ -94,6 +118,9 @@
         this.stepPhase = 0; // 0..1 for step-like footwork
         // Debug flags (injected by Game each frame)
         this.debugHyakuretsu = false;
+        this.bowState = null;
+        this.bowAmount = 0;
+        this.hasGreeted = false;
       }
 
       get stance() { return HEIGHTS[this.stanceIndex]; }
@@ -110,6 +137,68 @@
         this.state = 'attack';
         this.stateT = 0;
         return true;
+      }
+
+      startBow(durations = {}) {
+        if (!this.alive || this.bowState) return;
+        const defaults = { down: 520, hold: 360, up: 520 };
+        const phases = { ...defaults, ...durations };
+        this.bowState = { phase: 'down', t: 0, durations: phases };
+        this.bowAmount = 0;
+        this.attack = null;
+        this.intentAttack = null;
+        this.hitLag = 0;
+        this.moveDir = 0;
+        this.state = 'bow';
+        this.stateT = 0;
+        this.walkCycle = 0;
+        this.stepPhase = 0;
+        const total = (phases.down || 0) + (phases.hold || 0) + (phases.up || 0);
+        this.attackCooldown = Math.max(this.attackCooldown, total + 160);
+      }
+
+      isBowAnimating() { return !!this.bowState; }
+
+      hasClearedBowPose() { return !this.bowState && this.bowAmount < 0.05; }
+
+      handleBow(dt) {
+        if (this.bowState) {
+          const bs = this.bowState;
+          const durations = bs.durations;
+          bs.t += dt;
+          this.moveDir = 0;
+          this.state = 'bow';
+          this.stateT += dt;
+          this.attack = null;
+          this.intentAttack = null;
+          this.walkCycle = lerp(this.walkCycle, 0, 0.25);
+          this.stepPhase = lerp(this.stepPhase, 0, 0.2);
+          if (bs.phase === 'down') {
+            const downDur = Math.max(1, durations.down || 0);
+            const prog = clamp(bs.t / downDur, 0, 1);
+            this.bowAmount = lerp(this.bowAmount, prog, 0.35);
+            if (bs.t >= downDur) { bs.phase = 'hold'; bs.t = 0; }
+          } else if (bs.phase === 'hold') {
+            const holdDur = Math.max(1, durations.hold || 0);
+            this.bowAmount = lerp(this.bowAmount, 1, 0.22);
+            if (bs.t >= holdDur) { bs.phase = 'up'; bs.t = 0; }
+          } else if (bs.phase === 'up') {
+            const upDur = Math.max(1, durations.up || 0);
+            const prog = clamp(bs.t / upDur, 0, 1);
+            this.bowAmount = lerp(this.bowAmount, Math.max(0, 1 - prog), 0.28);
+            if (bs.t >= upDur) {
+              this.bowState = null;
+              this.state = 'idle';
+              this.stateT = 0;
+              this.bowAmount = lerp(this.bowAmount, 0, 0.28);
+              this.attackCooldown = Math.max(this.attackCooldown, 240);
+              return true;
+            }
+          }
+          return true;
+        }
+        this.bowAmount = lerp(this.bowAmount, 0, 0.18);
+        return false;
       }
 
       isBlockingAgainst(height) {
@@ -193,6 +282,10 @@
           return;
         }
 
+        if (this.handleBow(dt)) {
+          return;
+        }
+
         // Decide movement for player or enemy
         if (!this.enemy) this.handlePlayerInput(dt, input, game);
         else this.handleAI(dt, game);
@@ -233,6 +326,13 @@
             const tryHit = (opts) => {
               const hitbox = self.getAttackRect();
               if (!hitbox || !game) return;
+              if (!self.enemy && game.handlePlayerAttackSwing) {
+                const hazardHit = game.handlePlayerAttackSwing(hitbox, self, a, opts);
+                if (hazardHit) {
+                  a.applied = true;
+                  return;
+                }
+              }
               const foe = self.enemy ? game.player : game.activeEnemy;
               if (!foe) return;
               const foeHurt = foe.getHurtRects()[a.height];
@@ -364,6 +464,8 @@
         const BW = Math.round(b.w);
         const BH = Math.round(b.h);
 
+        const bowAmount = this.bowAmount || 0;
+
         ctx.save();
         ctx.globalAlpha = this.opacity;
 
@@ -401,8 +503,11 @@
 
         // Stance and walk shaping
         const stance = this.stance; // 'low' | 'mid' | 'high'
-        const crouch = stance === 'low' ? 8 : stance === 'mid' ? 4 : 0;
-        const lean = stance === 'high' ? 0.02 : stance === 'low' ? 0.10 : 0.06;
+        const baseCrouch = stance === 'low' ? 8 : stance === 'mid' ? 4 : 0;
+        const bowCrouch = bowAmount * 18;
+        const crouch = baseCrouch + bowCrouch;
+        const baseLean = stance === 'high' ? 0.02 : stance === 'low' ? 0.10 : 0.06;
+        const lean = baseLean + bowAmount * 0.28;
         const beltY = torsoTop + torsoH*0.58 + crouch*0.3;
         const walkSwing = Math.sin(this.walkCycle*2) * 0.25;
 
@@ -509,6 +614,15 @@
         const guardBack  = { up: -0.75 - walkSwing*0.2, low: -0.9 };
         const legFrontA  = { thigh: 0.75 + (stance==='low'?0.15:0) + walkSwing*0.2, shin: 0.85 + (stance==='low'?0.15:0) - walkSwing*0.2, foot: 0.15 };
         const legBackA   = { thigh: 0.95 + (stance==='low'?0.15:0) - walkSwing*0.2, shin: 0.95 + (stance==='low'?0.15:0) + walkSwing*0.2, foot: -0.05 };
+
+        if (bowAmount > 0.001) {
+          guardFront.up = lerp(guardFront.up, 1.15, bowAmount);
+          guardFront.low = lerp(guardFront.low, -1.45, bowAmount);
+          guardBack.up = lerp(guardBack.up, 1.28, bowAmount);
+          guardBack.low = lerp(guardBack.low, -1.5, bowAmount);
+          legFrontA.thigh = lerp(legFrontA.thigh, 0.55, bowAmount * 0.8);
+          legBackA.thigh = lerp(legBackA.thigh, 0.8, bowAmount * 0.8);
+        }
 
         if (this.attack) {
           const a = this.attack;
@@ -647,9 +761,138 @@
           ctx.restore();
         }
       }
+  }
+
+  class Pigeon {
+    constructor(game) {
+      this.alive = true;
+      this.x = game.player ? game.player.x + 320 : 320;
+      this.y = GROUND_Y - 220;
+      this.state = 'enter';
+      this.timer = 0;
+      this.opacity = 0;
+      this.hitCooldown = 0;
+      this.dissolve = false;
     }
 
-    class Game {
+    getHitbox() {
+      return { x: this.x - 28, y: this.y - 18, w: 56, h: 36 };
+    }
+
+    takeHit(game) {
+      if (!this.alive || this.dissolve) return;
+      this.alive = false;
+      this.timer = 0;
+      this.dissolve = true;
+      this.opacity = 1;
+      if (game && game.birdTrap) {
+        game.birdTrap.resolved = true;
+        game.pushTempMessage('鳩を撃退!', 1400, 0.95);
+      }
+    }
+
+    update(dt, game) {
+      const t = dt / 1000;
+      const player = game.player;
+      if (!game || game.state !== 'playing' || !player) return;
+
+      this.timer += dt;
+      this.hitCooldown = Math.max(0, this.hitCooldown - dt);
+
+      if (this.dissolve) {
+        this.opacity = Math.max(0, this.opacity - dt * 0.003);
+        this.y += 180 * t;
+        this.x += 40 * t;
+        if (this.opacity <= 0 || this.y > GROUND_Y + 90) {
+          game.birdTrap.bird = null;
+        }
+        return;
+      }
+
+      this.opacity = Math.min(1, this.opacity + dt * 0.0045);
+
+      switch (this.state) {
+        case 'enter': {
+          this.x -= 140 * t;
+          this.y = lerp(this.y, player.y - 140, 0.018 * dt);
+          if (this.x <= player.x + 110) {
+            this.state = 'hover';
+            this.timer = 0;
+          }
+          break;
+        }
+        case 'hover': {
+          this.x = lerp(this.x, player.x + 80, 0.12 * t);
+          this.y = lerp(this.y, player.y - 130, 0.16 * t);
+          if (this.timer >= 360) {
+            this.state = 'dive';
+            this.timer = 0;
+          }
+          break;
+        }
+        case 'dive': {
+          const targetX = player.x + (player.dir === 1 ? -18 : 18);
+          this.x = lerp(this.x, targetX, 0.25);
+          this.y += 420 * t;
+          if (this.hitCooldown <= 0 && this.y >= player.y - 60) {
+            if (player.alive) {
+              player.applyHit(8, 34, 'peck', 'high', false);
+            }
+            this.hitCooldown = 700;
+          }
+          if (this.y >= player.y + 48) {
+            this.state = 'rise';
+            this.timer = 0;
+          }
+          break;
+        }
+        case 'rise': {
+          this.x += 220 * t;
+          this.y -= 360 * t;
+          if (this.y <= GROUND_Y - 210) {
+            this.state = 'hover';
+            this.timer = 0;
+          }
+          break;
+        }
+      }
+    }
+
+    draw(ctx, camX) {
+      const alpha = this.opacity;
+      if (alpha <= 0) return;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      const sx = Math.round(this.x - camX);
+      const sy = Math.round(this.y);
+      ctx.translate(sx, sy);
+      ctx.fillStyle = '#d9dde4';
+      ctx.strokeStyle = '#0b0e12';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-26, -6);
+      ctx.quadraticCurveTo(0, -22, 26, -6);
+      ctx.quadraticCurveTo(4, 2, -26, -6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 18, 12, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#c2c6cf';
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#f8a03c';
+      ctx.beginPath();
+      ctx.moveTo(16, -2);
+      ctx.lineTo(26, 0);
+      ctx.lineTo(16, 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  class Game {
       constructor() {
         this.player = new Fighter({
           name: 'Player',
@@ -731,6 +974,9 @@
         this.seaBottomY = GROUND_Y + 220;
         this.fallAnim = null;
         this.splashTimer = 0;
+        this.engagement = { state: 'idle', enemy: null, timer: 0 };
+        this.birdTrap = { triggered: false, bird: null, resolved: false };
+        this.tempMessage = null;
       }
 
       reset() {
@@ -746,6 +992,40 @@
 
       getRightBoundary() {
         return WORLD_W - 20;
+      }
+
+      beginGreeting(enemy) {
+        if (!enemy || enemy.hasGreeted) return;
+        this.engagement = { state: 'bowing', enemy, timer: 0 };
+        this.player.faceToward(enemy.x);
+        enemy.faceToward(this.player.x);
+        this.player.startBow();
+        enemy.startBow();
+        enemy.hasGreeted = true;
+      }
+
+      pushTempMessage(text, duration = 1000, opacity = 0.85) {
+        this.tempMessage = { text, timer: duration, opacity };
+      }
+
+      triggerBirdTrap() {
+        if (this.birdTrap.triggered) return;
+        this.birdTrap.triggered = true;
+        this.birdTrap.resolved = false;
+        this.birdTrap.bird = new Pigeon(this);
+        this.pushTempMessage('鳩が襲来!', 1600, 0.9);
+      }
+
+      handlePlayerAttackSwing(hitbox) {
+        let hit = false;
+        const bird = this.birdTrap.bird;
+        if (bird && !bird.dissolve) {
+          if (rectsOverlap(hitbox, bird.getHitbox())) {
+            bird.takeHit(this);
+            hit = true;
+          }
+        }
+        return hit;
       }
 
       beginSeaFall() {
@@ -824,13 +1104,57 @@
 
         if (keys.has('h')) { this.debugHyakuretsu = !this.debugHyakuretsu; keys.delete('h'); }
 
-        if (!this.activeEnemy || !this.activeEnemy.alive) {
-          this.activeEnemy = this.enemies.find(e => e.alive && Math.abs(e.x - this.player.x) < this.engageRadius && e.x >= this.player.x);
+        const activeAlive = this.activeEnemy && this.activeEnemy.alive ? this.activeEnemy : null;
+        if (!activeAlive) {
+          const candidate = this.enemies.find(e => e.alive && Math.abs(e.x - this.player.x) < this.engageRadius && e.x >= this.player.x);
+          if (candidate) {
+            this.activeEnemy = candidate;
+            if (!candidate.hasGreeted) this.beginGreeting(candidate);
+            else if (this.engagement.state === 'idle') this.engagement = { state: 'fight', enemy: candidate, timer: 0 };
+          } else {
+            this.activeEnemy = null;
+            if (this.engagement.state !== 'idle') this.engagement = { state: 'idle', enemy: null, timer: 0 };
+          }
+        } else {
+          this.activeEnemy = activeAlive;
+          if (!activeAlive.hasGreeted && this.engagement.state === 'idle') this.beginGreeting(activeAlive);
+          else if (this.engagement.enemy !== activeAlive) this.engagement.enemy = activeAlive;
         }
 
         this.player.debugHyakuretsu = this.debugHyakuretsu;
         this.player.update(dt, this, keys);
         if (this.activeEnemy) this.activeEnemy.update(dt, this, null);
+
+        if (!this.birdTrap.triggered) {
+          const firstEnemy = this.enemies[0];
+          if (firstEnemy && !firstEnemy.alive) {
+            this.triggerBirdTrap();
+          }
+        }
+        if (this.birdTrap.bird) this.birdTrap.bird.update(dt, this);
+
+        if (this.engagement.state === 'bowing') {
+          const foe = this.engagement.enemy && this.engagement.enemy.alive ? this.engagement.enemy : null;
+          if (!foe) {
+            this.engagement = { state: 'idle', enemy: null, timer: 0 };
+          } else if (!this.player.isBowAnimating() && this.player.hasClearedBowPose() && !foe.isBowAnimating() && foe.hasClearedBowPose()) {
+            this.engagement = { state: 'postBow', enemy: foe, timer: 480 };
+          }
+        } else if (this.engagement.state === 'postBow') {
+          const foe = this.engagement.enemy && this.engagement.enemy.alive ? this.engagement.enemy : null;
+          if (!foe) {
+            this.engagement = { state: 'idle', enemy: null, timer: 0 };
+          } else {
+            this.engagement.timer = Math.max(0, this.engagement.timer - dt);
+            if (this.engagement.timer <= 0) {
+              this.engagement = { state: 'fight', enemy: foe, timer: 0 };
+            }
+          }
+        } else if (this.engagement.state === 'fight') {
+          if (!this.engagement.enemy || !this.engagement.enemy.alive) {
+            this.engagement = { state: 'idle', enemy: null, timer: 0 };
+          }
+        }
 
         const marginLeft = 300;
         const targetCam = clamp(this.player.x - marginLeft, 0, Math.max(0, WORLD_W - VIEW_W));
@@ -847,14 +1171,39 @@
         const foe = this.activeEnemy && this.activeEnemy.alive ? this.activeEnemy : this.enemies.find(e => e.alive) || null;
         ebar.style.width = foe ? `${Math.round((foe.hp / foe.maxHp) * 100)}%` : '0%';
 
+        if (this.tempMessage) {
+          this.tempMessage.timer = Math.max(0, this.tempMessage.timer - dt);
+          if (this.tempMessage.timer <= 0) this.tempMessage = null;
+        }
+
         if (this.state === 'playing') {
-          if (!this.activeEnemy || !this.activeEnemy.alive) {
-            centerMsg.textContent = this.debugHyakuretsu ? '進め →  [DEBUG: 百裂拳]' : '進め →';
-            centerMsg.style.opacity = 0.5;
-          } else {
-            centerMsg.textContent = this.debugHyakuretsu ? '[DEBUG: 百裂拳]' : '';
-            centerMsg.style.opacity = this.debugHyakuretsu ? 0.7 : 0;
+          let msg = '';
+          let opacity = 0;
+          const birdActive = this.birdTrap.bird && !this.birdTrap.bird.dissolve;
+          if (this.tempMessage) {
+            msg = this.tempMessage.text;
+            opacity = this.tempMessage.opacity;
+          } else if (birdActive) {
+            msg = '鳩を攻撃!';
+            opacity = 0.9;
+          } else if (this.engagement.state === 'bowing') {
+            msg = '礼';
+            opacity = 0.85;
+          } else if (this.engagement.state === 'postBow') {
+            msg = '構え!';
+            opacity = 0.8;
+          } else if (!this.activeEnemy || !this.activeEnemy.alive) {
+            msg = '進め →';
+            opacity = 0.5;
           }
+
+          if (this.debugHyakuretsu) {
+            msg = msg ? `${msg}  [DEBUG: 百裂拳]` : '[DEBUG: 百裂拳]';
+            opacity = Math.max(opacity, 0.7);
+          }
+
+          centerMsg.textContent = msg;
+          centerMsg.style.opacity = opacity;
         }
 
         if (!this.activeEnemy && this.player.x <= this.seaEdgeX + 4 && this.player.moveDir < 0 && this.cameraX < 10) {
@@ -888,6 +1237,7 @@
         this.drawSea(cam);
 
         if (this.activeEnemy) this.activeEnemy.draw(ctx, cam);
+        if (this.birdTrap.bird) this.birdTrap.bird.draw(ctx, cam);
         this.player.draw(ctx, cam);
 
         if (this.splashTimer > 0) {
